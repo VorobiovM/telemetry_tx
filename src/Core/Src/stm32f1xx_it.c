@@ -22,36 +22,51 @@
 #include "stm32f1xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "stm32f1xx_hal_crc.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN TD */
-
 /* USER CODE END TD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-# define DMA_BUFFER_SIZE 72
-# define DMA_MAX_OFFSET 6
-# define UART_MSG_LEN 12
-# define CAN_MSG_LEN 8
+#define DEBUG_FRAME 0
+
+#define UART_MSG_LEN (16)
+#define DMA_UART_MSG_CNT (20)
+#define DMA_BUFFER_SIZE (UART_MSG_LEN * DMA_UART_MSG_CNT)
+#define CAN_MSG_LEN (8)
+#define CRC_LEN (((CAN_MSG_LEN) * (sizeof(uint8_t))) / (sizeof(uint32_t)))
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
+union CanData{
+  uint8_t byte[CAN_MSG_LEN];
+  uint32_t word[CRC_LEN];
+};
 
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN PV */
+static union CanData can_data;
+static CAN_RxHeaderTypeDef header;
+
+static uint32_t can_crc = { 0 };
+
 static uint8_t dma_buffer[DMA_BUFFER_SIZE] = { 0 };
-static uint8_t *const p_buffer = (uint8_t*) &dma_buffer;
 static uint8_t dma_offset = 0;
+static uint8_t *const p_buffer = (uint8_t *)&dma_buffer;
+#if DEBUG_FRAME == 1
+static uint32_t frame_count = 0;
+static char frames[10] = { 0 };
+#endif
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN PFP */
-
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -61,11 +76,11 @@ static uint8_t dma_offset = 0;
 
 /* External variables --------------------------------------------------------*/
 extern CAN_HandleTypeDef hcan;
-extern TIM_HandleTypeDef htim2;
 extern DMA_HandleTypeDef hdma_usart1_tx;
 extern UART_HandleTypeDef huart1;
 /* USER CODE BEGIN EV */
-
+extern UART_HandleTypeDef huart1;
+extern CRC_HandleTypeDef hcrc;
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -80,8 +95,8 @@ void NMI_Handler(void)
 
   /* USER CODE END NonMaskableInt_IRQn 0 */
   /* USER CODE BEGIN NonMaskableInt_IRQn 1 */
-	while (1) {
-	}
+  while (1) {
+  }
   /* USER CODE END NonMaskableInt_IRQn 1 */
 }
 
@@ -225,53 +240,63 @@ void DMA1_Channel4_IRQHandler(void)
 void USB_LP_CAN1_RX0_IRQHandler(void)
 {
   /* USER CODE BEGIN USB_LP_CAN1_RX0_IRQn 0 */
-	uint8_t can_data[CAN_MSG_LEN];
-	uint32_t can_id;
-	CAN_RxHeaderTypeDef header;
   /* USER CODE END USB_LP_CAN1_RX0_IRQn 0 */
   HAL_CAN_IRQHandler(&hcan);
   /* USER CODE BEGIN USB_LP_CAN1_RX0_IRQn 1 */
-	// TODO add second FIFO in case of bottleneck
-	HAL_CAN_GetRxMessage(&hcan, CAN_RX_FIFO0, &header, can_data);
+  HAL_CAN_GetRxMessage(&hcan, CAN_RX_FIFO0, &header, can_data.byte);
 
-	// Fill DMA buffer
-	can_id = header.StdId;
-	// @formatter:off
-  	dma_buffer[dma_offset * UART_MSG_LEN + 0]  = 0xFE;  // Begin padding
-  	dma_buffer[dma_offset * UART_MSG_LEN + 1]  = (can_id & 0xFF00) >> 8;
-  	dma_buffer[dma_offset * UART_MSG_LEN + 2]  = (can_id & 0x00FF) >> 0;
-  	dma_buffer[dma_offset * UART_MSG_LEN + 3]  = can_data[0];
-  	dma_buffer[dma_offset * UART_MSG_LEN + 4]  = can_data[1];
-  	dma_buffer[dma_offset * UART_MSG_LEN + 5]  = can_data[2];
-  	dma_buffer[dma_offset * UART_MSG_LEN + 6]  = can_data[3];
-  	dma_buffer[dma_offset * UART_MSG_LEN + 7]  = can_data[4];
-  	dma_buffer[dma_offset * UART_MSG_LEN + 8]  = can_data[5];
-  	dma_buffer[dma_offset * UART_MSG_LEN + 9]  = can_data[6];
-  	dma_buffer[dma_offset * UART_MSG_LEN + 10] = can_data[7];
-  	dma_buffer[dma_offset * UART_MSG_LEN + 11] = 0x7F;  // End padding
-  		// @formatter:on
+  if (HAL_CRC_GetState(&hcrc) == HAL_CRC_STATE_READY) {
+    can_crc = HAL_CRC_Calculate(&hcrc, can_data.word, CRC_LEN);
+  }
 
-	// Increment DMA offset
-	if (++dma_offset == DMA_MAX_OFFSET) {
-		dma_offset = 0;
-		HAL_UART_Transmit_DMA(&huart1, p_buffer, DMA_BUFFER_SIZE);
-		HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
-	}
+  // Fill DMA buffer
+#if DEBUG_FRAME == 1
+  // @formatter:off
+  sprintf(frames, "%09u", ++frame_count);
+  dma_buffer[UART_MSG_LEN * dma_offset +  0] = 'F';
+  dma_buffer[UART_MSG_LEN * dma_offset +  1] = ':';
+  dma_buffer[UART_MSG_LEN * dma_offset +  2] = frames[0];
+  dma_buffer[UART_MSG_LEN * dma_offset +  3] = frames[1];
+  dma_buffer[UART_MSG_LEN * dma_offset +  4] = frames[2];
+  dma_buffer[UART_MSG_LEN * dma_offset +  5] = frames[3];
+  dma_buffer[UART_MSG_LEN * dma_offset +  6] = frames[4];
+  dma_buffer[UART_MSG_LEN * dma_offset +  7] = frames[5];
+  dma_buffer[UART_MSG_LEN * dma_offset +  8] = frames[6];
+  dma_buffer[UART_MSG_LEN * dma_offset +  9] = frames[7];
+  dma_buffer[UART_MSG_LEN * dma_offset + 10] = frames[8];
+  dma_buffer[UART_MSG_LEN * dma_offset + 11] = frames[9];
+  dma_buffer[UART_MSG_LEN * dma_offset + 12] = 'O';
+  dma_buffer[UART_MSG_LEN * dma_offset + 13] = ':';
+  dma_buffer[UART_MSG_LEN * dma_offset + 14] = (dma_offset / 10) + 48;
+  dma_buffer[UART_MSG_LEN * dma_offset + 15] = (dma_offset % 10) + 48;
+    // @formatter:on
+#else
+  // @formatter:off
+  dma_buffer[UART_MSG_LEN * dma_offset +  0] = 0xFE; // Start padding
+  dma_buffer[UART_MSG_LEN * dma_offset +  1] = (header.StdId & 0x0000FF00) >> 8;
+  dma_buffer[UART_MSG_LEN * dma_offset +  2] = (header.StdId & 0x000000FF) >> 0;
+  dma_buffer[UART_MSG_LEN * dma_offset +  3] = can_data.byte[0];
+  dma_buffer[UART_MSG_LEN * dma_offset +  4] = can_data.byte[1];
+  dma_buffer[UART_MSG_LEN * dma_offset +  5] = can_data.byte[2];
+  dma_buffer[UART_MSG_LEN * dma_offset +  6] = can_data.byte[3];
+  dma_buffer[UART_MSG_LEN * dma_offset +  7] = can_data.byte[4];
+  dma_buffer[UART_MSG_LEN * dma_offset +  8] = can_data.byte[5];
+  dma_buffer[UART_MSG_LEN * dma_offset +  9] = can_data.byte[6];
+  dma_buffer[UART_MSG_LEN * dma_offset + 10] = can_data.byte[7];
+  dma_buffer[UART_MSG_LEN * dma_offset + 11] = (can_crc & 0xFF000000) >> 24; // CRC-32 CAN data
+  dma_buffer[UART_MSG_LEN * dma_offset + 12] = (can_crc & 0x00FF0000) >> 16; // CRC-32 CAN data
+  dma_buffer[UART_MSG_LEN * dma_offset + 13] = (can_crc & 0x0000FF00) >> 8;  // CRC-32 CAN data
+  dma_buffer[UART_MSG_LEN * dma_offset + 14] = (can_crc & 0x000000FF) >> 0;  // CRC-32 CAN data
+  dma_buffer[UART_MSG_LEN * dma_offset + 15] = 0x7F; // End padding
+    // @formatter:on
+#endif
+  // Send USART via DMA
+  if (++dma_offset == DMA_UART_MSG_CNT) {
+    dma_offset = 0;
+    HAL_UART_Transmit_DMA(&huart1, p_buffer, DMA_BUFFER_SIZE);
+    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+  }
   /* USER CODE END USB_LP_CAN1_RX0_IRQn 1 */
-}
-
-/**
-  * @brief This function handles TIM2 global interrupt.
-  */
-void TIM2_IRQHandler(void)
-{
-  /* USER CODE BEGIN TIM2_IRQn 0 */
-
-  /* USER CODE END TIM2_IRQn 0 */
-  HAL_TIM_IRQHandler(&htim2);
-  /* USER CODE BEGIN TIM2_IRQn 1 */
-
-  /* USER CODE END TIM2_IRQn 1 */
 }
 
 /**
@@ -286,20 +311,6 @@ void USART1_IRQHandler(void)
   /* USER CODE BEGIN USART1_IRQn 1 */
 
   /* USER CODE END USART1_IRQn 1 */
-}
-
-/**
-  * @brief This function handles EXTI line[15:10] interrupts.
-  */
-void EXTI15_10_IRQHandler(void)
-{
-  /* USER CODE BEGIN EXTI15_10_IRQn 0 */
-
-  /* USER CODE END EXTI15_10_IRQn 0 */
-  HAL_GPIO_EXTI_IRQHandler(B1_Pin);
-  /* USER CODE BEGIN EXTI15_10_IRQn 1 */
-
-  /* USER CODE END EXTI15_10_IRQn 1 */
 }
 
 /* USER CODE BEGIN 1 */

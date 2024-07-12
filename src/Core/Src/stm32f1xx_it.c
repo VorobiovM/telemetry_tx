@@ -273,8 +273,8 @@ void USB_LP_CAN1_RX0_IRQHandler(void)
 #else
   // @formatter:off
   dma_buffer[UART_MSG_LEN * dma_offset +  0] = 0xFE; // Start padding
-  dma_buffer[UART_MSG_LEN * dma_offset +  1] = (header.StdId & 0x0000FF00) >> 8;
-  dma_buffer[UART_MSG_LEN * dma_offset +  2] = (header.StdId & 0x000000FF) >> 0;
+  dma_buffer[UART_MSG_LEN * dma_offset +  1] = (header.StdId & 0x000000FF) >> 0;
+  dma_buffer[UART_MSG_LEN * dma_offset +  2] = (header.StdId & 0x0000FF00) >> 8;
   dma_buffer[UART_MSG_LEN * dma_offset +  3] = can_data.byte[0];
   dma_buffer[UART_MSG_LEN * dma_offset +  4] = can_data.byte[1];
   dma_buffer[UART_MSG_LEN * dma_offset +  5] = can_data.byte[2];
@@ -283,10 +283,10 @@ void USB_LP_CAN1_RX0_IRQHandler(void)
   dma_buffer[UART_MSG_LEN * dma_offset +  8] = can_data.byte[5];
   dma_buffer[UART_MSG_LEN * dma_offset +  9] = can_data.byte[6];
   dma_buffer[UART_MSG_LEN * dma_offset + 10] = can_data.byte[7];
-  dma_buffer[UART_MSG_LEN * dma_offset + 11] = (can_crc & 0xFF000000) >> 24; // CRC-32 CAN data
-  dma_buffer[UART_MSG_LEN * dma_offset + 12] = (can_crc & 0x00FF0000) >> 16; // CRC-32 CAN data
-  dma_buffer[UART_MSG_LEN * dma_offset + 13] = (can_crc & 0x0000FF00) >> 8;  // CRC-32 CAN data
-  dma_buffer[UART_MSG_LEN * dma_offset + 14] = (can_crc & 0x000000FF) >> 0;  // CRC-32 CAN data
+  dma_buffer[UART_MSG_LEN * dma_offset + 11] = (can_crc & 0x000000FF) >> 0;  // CRC-32 CAN data
+  dma_buffer[UART_MSG_LEN * dma_offset + 12] = (can_crc & 0x0000FF00) >> 8;  // CRC-32 CAN data
+  dma_buffer[UART_MSG_LEN * dma_offset + 13] = (can_crc & 0x00FF0000) >> 16; // CRC-32 CAN data
+  dma_buffer[UART_MSG_LEN * dma_offset + 14] = (can_crc & 0xFF000000) >> 24; // CRC-32 CAN data
   dma_buffer[UART_MSG_LEN * dma_offset + 15] = 0x7F; // End padding
     // @formatter:on
 #endif
